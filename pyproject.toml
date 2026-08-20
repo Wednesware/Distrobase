@@ -1,7 +1,7 @@
 [project]
-name = "distrobase-cf"
-version = "0.1.0"
-description = "Add your description here"
+name = "distrobase"
+version = "26.1"
+description = "Open platform for hosting and distributing software online through namespaces."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
