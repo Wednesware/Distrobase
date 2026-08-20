@@ -12,7 +12,20 @@
 	],
 	"observability": {
 		"enabled": true
-	}
+	},
+	"d1_databases": [
+		{
+			"binding": "distrobase_db",
+			"database_name": "distrobase-db",
+			"database_id": "c637a6d7-c6dc-45ea-bc0b-7355e82c78fb"
+		}
+	],
+	"r2_buckets": [
+		{
+			"bucket_name": "distrobase-artifacts",
+			"binding": "distrobase_artifacts"
+		}
+	]
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
