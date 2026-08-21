@@ -1,7 +1,11 @@
 import hashlib
+import re
 from pathlib import Path
 
 from pydantic import BaseModel
+
+
+MAX_ARTIFACT_SIZE = 100 * 1024 * 1024
 
 
 class RegistryError(Exception):
@@ -43,6 +47,46 @@ class Registry:
     def __init__(self, db, bucket=None):
         self.db = db
         self.bucket = bucket
+
+    @staticmethod
+    def validateArtifactName(name: str) -> str:
+        if not name:
+            raise RegistryError("Artifact must have a filename")
+
+        candidate = Path(name).name
+        if candidate != name or candidate in {".", ".."}:
+            raise RegistryError("Artifact filename contains invalid path segments")
+
+        if any(ch in candidate for ch in ("/", "\\", "\x00")):
+            raise RegistryError("Artifact filename contains unsafe characters")
+
+        if len(candidate) > 255:
+            raise RegistryError("Artifact filename is too long")
+
+        return candidate
+
+    @staticmethod
+    def validateIdentifier(value: str, field_name: str) -> str:
+        if not value:
+            raise RegistryError(f"{field_name} is required")
+        if len(value) > 128:
+            raise RegistryError(f"{field_name} is too long")
+        if value in {".", ".."}:
+            raise RegistryError(f"{field_name} contains invalid path segments")
+        if any(ch in value for ch in ("/", "\\", "\x00")):
+            raise RegistryError(f"{field_name} contains invalid characters")
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", value):
+            raise RegistryError(f"{field_name} contains unsupported characters")
+        return value
+
+    @staticmethod
+    def validateArtifactSize(size: int) -> None:
+        if size <= 0:
+            raise RegistryError("Artifact must not be empty")
+        if size > MAX_ARTIFACT_SIZE:
+            raise RegistryError(
+                f"Artifact exceeds the maximum allowed size of {MAX_ARTIFACT_SIZE} bytes"
+            )
 
     async def getDistribution(
         self,
@@ -132,11 +176,14 @@ class Registry:
         if self.bucket is None:
             raise RegistryError("Artifact storage is not configured")
 
-        artifact_name = Path((artifact.filename or "")).name
-        if not artifact_name:
-            raise RegistryError("Artifact must have a filename")
+        author = self.validateIdentifier(author, "Author")
+        distribution = self.validateIdentifier(distribution, "Distribution")
+        release = self.validateIdentifier(release, "Release")
 
+        artifact_name = self.validateArtifactName(artifact.filename or "")
         content = await artifact.read()
+        self.validateArtifactSize(len(content))
+
         size = len(content)
         sha256 = hashlib.sha256(content).hexdigest()
         r2_key = f"{author}/{distribution}/{release}/{artifact_name}"

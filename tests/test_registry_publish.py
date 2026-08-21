@@ -1,13 +1,13 @@
 import asyncio
 import hashlib
-from pathlib import Path
-from types import SimpleNamespace
-
 import sys
+from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from registry import Registry, RegistryError
+from registry import MAX_ARTIFACT_SIZE, Registry, RegistryError
 
 
 class FakeResult:
@@ -151,6 +151,22 @@ def test_publish_release_stores_r2_and_d1_metadata():
     asyncio.run(run_test())
 
 
+def test_publish_release_rejects_unsafe_paths_and_oversized_payloads():
+    async def run_test():
+        db = FakeDB()
+        bucket = FakeBucket()
+        registry = Registry(db, bucket)
+
+        with pytest.raises(RegistryError, match="invalid"):
+            await registry.publishRelease("alkli", "../project", "26.5", FakeUpload("../project.tar.gz", b"data"))
+
+        with pytest.raises(RegistryError, match="maximum allowed size"):
+            await registry.publishRelease("alkli", "project", "26.5", FakeUpload("artifact.bin", b"x" * (MAX_ARTIFACT_SIZE + 1)))
+
+    asyncio.run(run_test())
+
+
 if __name__ == "__main__":
     test_publish_release_stores_r2_and_d1_metadata()
+    test_publish_release_rejects_unsafe_paths_and_oversized_payloads()
     print("ok")
