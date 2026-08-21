@@ -4,6 +4,13 @@ You can run the Worker defined by your new project by executing `wrangler dev` i
 directory. This will start up an HTTP server and will allow you to iterate on your
 Worker without having to restart `wrangler`.
 
+### Secure publishing
+
+Artifact uploads are intentionally fail-closed: the service requires a bearer token to
+publish new releases. Configure the token in your Worker environment as
+`DISTROBASE_AUTH_TOKEN` (or `distrobase_auth_token`) before enabling uploads. The
+service also rejects unsafe filenames, empty uploads, and files larger than 100 MiB.
+
 ### Types and autocomplete
 
 This project also includes a pyproject.toml with some requirements which
