@@ -1,3 +1,4 @@
+import base64
 from urllib.parse import urlparse
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from workers import WorkerEntrypoint, Response  # type: ignore
@@ -14,7 +15,6 @@ from registry import (
 
 app = FastAPI()
 
-
 def get_worker_env(request: Request):
     env = getattr(request.state, "env", None)
     if env is not None:
@@ -27,13 +27,111 @@ def get_worker_env(request: Request):
 
     raise RuntimeError("Worker environment is not configured for this request")
 
-
 @app.get("/")
 async def root():
     return {
         "service": "distrobase",
         "status": "ok",
     }
+
+def get_basic_auth_credentials(request: Request):
+    header = request.headers.get("authorization")
+    if not header or not header.lower().startswith("basic "):
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        )
+
+    try:
+        encoded = header.split(" ", 1)[1]
+        decoded = base64.b64decode(encoded).decode("utf-8")
+        username, password = decoded.split(":", 1)
+        return username, password
+    except Exception as exc:  # pragma: no cover - defensive
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        ) from exc
+
+
+@app.get("/v1/users")
+async def list_users(request: Request):
+    env = get_worker_env(request)
+    registry = Registry(
+        env.distrobase_db,
+        env.distrobase_artifacts,
+    )
+
+    users = await registry.listUsers()
+    return [
+        {
+            "username": user.username,
+            "created_at": user.created_at,
+        }
+        for user in users
+    ]
+
+
+@app.get("/v1/users/{username}")
+async def get_user(username: str, request: Request):
+    env = get_worker_env(request)
+    registry = Registry(
+        env.distrobase_db,
+        env.distrobase_artifacts,
+    )
+
+    try:
+        user = await registry.getUser(username)
+        return {
+            "username": user.username,
+            "created_at": user.created_at,
+        }
+    except RegistryError as error:
+        raise HTTPException(
+            status_code=404,
+            detail=str(error),
+        )
+
+
+@app.post("/v1/users")
+async def create_user(request: Request):
+    env = get_worker_env(request)
+    registry = Registry(
+        env.distrobase_db,
+        env.distrobase_artifacts,
+    )
+
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Request body must be JSON",
+        )
+
+    username = payload.get("username")
+    password = payload.get("password")
+    if not username or not password:
+        raise HTTPException(
+            status_code=400,
+            detail="username and password are required",
+        )
+
+    try:
+        user = await registry.createUser(
+            str(username),
+            str(password),
+            request.client.host if request.client else "unknown",
+        )
+        return {
+            "username": user.username,
+            "created_at": user.created_at,
+        }
+    except RegistryError as error:
+        raise HTTPException(
+            status_code=409,
+            detail=str(error),
+        )
 
 
 @app.get("/v1/{author}/{distribution}")
@@ -101,15 +199,61 @@ async def publish_release(
     )
 
     try:
+        username, password = get_basic_auth_credentials(request)
+        if username != author:
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication required",
+            )
         return await registry.publishRelease(
             author,
             distribution,
             release,
             artifact,
+            password=password,
+            ip_address=request.client.host if request.client else None,
         )
+    except HTTPException:
+        raise
     except RegistryError as error:
         raise HTTPException(
-            status_code=409,
+            status_code=401 if "Authentication required" in str(error) else 409,
+            detail=str(error),
+        )
+
+
+@app.delete("/v1/{author}/{distribution}/{release}")
+async def delete_release(
+    author: str,
+    distribution: str,
+    release: str,
+    request: Request,
+):
+    env = get_worker_env(request)
+    registry = Registry(
+        env.distrobase_db,
+        env.distrobase_artifacts,
+    )
+
+    try:
+        username, password = get_basic_auth_credentials(request)
+        if username != author:
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication required",
+            )
+        return await registry.deleteRelease(
+            author,
+            distribution,
+            release,
+            password=password,
+            ip_address=request.client.host if request.client else None,
+        )
+    except HTTPException:
+        raise
+    except RegistryError as error:
+        raise HTTPException(
+            status_code=401 if "Authentication required" in str(error) else 409,
             detail=str(error),
         )
 
