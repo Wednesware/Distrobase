@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 from pathlib import Path
 from types import SimpleNamespace
+from datetime import datetime, timezone
 
 import sys
 
@@ -73,13 +74,13 @@ class FakeStatement:
                         "sha256": row["sha256"],
                     })
             return FakeResult(results=rows)
-        if "SELECT username, password_hash, created_by_ip" in sql:
+        if "SELECT username, password_hash, created_at" in sql:
             rows = []
             for row in self.db.data["users"]:
                 rows.append({
                     "username": row["username"],
                     "password_hash": row["password_hash"],
-                    "created_by_ip": row["created_by_ip"],
+                    "created_at": row["created_at"],
                 })
             return FakeResult(results=rows)
         return FakeResult(results=[])
@@ -95,7 +96,7 @@ class FakeStatement:
             self.db.data["users"].append({
                 "username": self.bind_values[0],
                 "password_hash": self.bind_values[1],
-                "created_by_ip": self.bind_values[2],
+                "created_at": self.bind_values[2],
             })
             return FakeResult()
 
@@ -185,7 +186,7 @@ def test_publish_release_stores_r2_and_d1_metadata():
         content = b"artifact-data"
         artifact = FakeUpload("artifact.tar.gz", content)
 
-        await registry.createUser("alkli", "hunter2", "203.0.113.10")
+        await registry.createUser("alkli", "hunter2")
         result = await registry.publishRelease("alkli", "myproject", "26.5", artifact, password="hunter2")
 
         assert result.name == "artifact.tar.gz"
@@ -207,19 +208,19 @@ def test_publish_requires_valid_user_password_and_ip_limit():
         content = b"artifact-data"
         artifact = FakeUpload("artifact.tar.gz", content)
 
-        await registry.createUser("alkli", "hunter2", "203.0.113.11")
+        await registry.createUser("alkli", "hunter2")
 
         with pytest.raises(RegistryError, match="Authentication required"):
             await registry.publishRelease("alkli", "myproject", "26.6", artifact, password="wrong")
 
         for index in range(6):
             try:
-                await registry.createUser(f"user{index}", "pw", "203.0.113.12")
+                await registry.createUser(f"user{index}", "pw")
             except RegistryError:
                 pass
 
         with pytest.raises(RegistryError, match="Too many user creations"):
-            await registry.createUser("user-too-many", "pw", "203.0.113.12")
+            await registry.createUser("user-too-many", "pw")
 
     asyncio.run(run_test())
 
@@ -229,12 +230,12 @@ def test_get_and_list_users():
         db = FakeDB()
         registry = Registry(db)
 
-        await registry.createUser("alkli", "hunter2", "203.0.113.20")
-        await registry.createUser("torch", "secret", "203.0.113.21")
+        await registry.createUser("alkli", "hunter2")
+        await registry.createUser("torch", "secret")
 
         user = await registry.getUser("alkli")
         assert user.username == "alkli"
-        assert user.created_by_ip == "203.0.113.20"
+        assert user.created_at is not None
 
         users = await registry.listUsers()
         assert [entry.username for entry in users] == ["alkli", "torch"]
@@ -247,7 +248,7 @@ def test_password_hash_is_salted_and_not_plain_sha256():
         db = FakeDB()
         registry = Registry(db)
 
-        await registry.createUser("alkli", "hunter2", "203.0.113.30")
+        await registry.createUser("alkli", "hunter2")
 
         stored_hash = (await registry.getUser("alkli")).password_hash
         assert stored_hash != hashlib.sha256("hunter2".encode("utf-8")).hexdigest()

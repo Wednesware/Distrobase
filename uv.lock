@@ -61,7 +61,7 @@ wheels = [
 
 [[package]]
 name = "distrobase"
-version = "26.1"
+version = "26.2"
 source = { virtual = "." }
 dependencies = [
     { name = "fastapi" },

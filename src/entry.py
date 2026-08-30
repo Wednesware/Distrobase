@@ -66,7 +66,7 @@ async def list_users(request: Request):
     return [
         {
             "username": user.username,
-            "created_at": user.created_at,
+            "createdAt": user.created_at,
         }
         for user in users
     ]
@@ -84,7 +84,7 @@ async def get_user(username: str, request: Request):
         user = await registry.getUser(username)
         return {
             "username": user.username,
-            "created_at": user.created_at,
+            "createdAt": user.created_at,
         }
     except RegistryError as error:
         raise HTTPException(
@@ -121,11 +121,10 @@ async def create_user(request: Request):
         user = await registry.createUser(
             str(username),
             str(password),
-            request.client.host if request.client else "unknown",
         )
         return {
             "username": user.username,
-            "created_at": user.created_at,
+            "createdAt": user.created_at,
         }
     except RegistryError as error:
         raise HTTPException(
@@ -211,7 +210,6 @@ async def publish_release(
             release,
             artifact,
             password=password,
-            ip_address=request.client.host if request.client else None,
         )
     except HTTPException:
         raise
@@ -247,7 +245,6 @@ async def delete_release(
             distribution,
             release,
             password=password,
-            ip_address=request.client.host if request.client else None,
         )
     except HTTPException:
         raise

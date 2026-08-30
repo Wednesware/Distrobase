@@ -2,7 +2,7 @@ import base64
 import hashlib
 import hmac
 import secrets
-import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -46,7 +46,7 @@ class Release(BaseModel):
 class User(BaseModel):
     username: str
     password_hash: str
-    created_by_ip: str | None = None
+    created_at: str | None = None
 
 
 class Registry:
@@ -64,14 +64,14 @@ class Registry:
             CREATE TABLE IF NOT EXISTS users (
                 username TEXT NOT NULL PRIMARY KEY,
                 password_hash TEXT NOT NULL,
-                created_by_ip TEXT
+                created_at TEXT NOT NULL
             )
             """,
             """
             CREATE TABLE IF NOT EXISTS user_creation_events (
                 username TEXT NOT NULL,
                 ip TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
                 PRIMARY KEY (username, ip, created_at)
             )
             """,
@@ -152,9 +152,8 @@ class Registry:
         self,
         username: str,
         password: str,
-        ip_address: str | None = None,
-        max_creations_per_ip: int = 5,
-        window_seconds: int = 3600,
+        created_at: str | None = None,
+        ip: str | None = None,
     ) -> User:
         await self.ensureSchema()
         if not username or not username.strip():
@@ -163,22 +162,9 @@ class Registry:
             raise RegistryError("Password is required")
 
         username = username.strip()
-        ip_address = ip_address or "unknown"
-
-        cutoff = int(time.time()) - window_seconds
-        creation_count_result = await self.db.prepare(
-            """
-            SELECT COUNT(*) AS total
-            FROM user_creation_events
-            WHERE ip = ? AND created_at >= ?
-            """
-        ).bind(
-            ip_address,
-            cutoff,
-        ).first()
-        creation_count = int((creation_count_result or {}).get("total", 0))
-        if creation_count >= max_creations_per_ip:
-            raise RegistryError("Too many user creations from this IP; try again later.")
+        created_at = created_at or datetime.now(timezone.utc).isoformat()
+        password_hash = self._hash_password(password)
+        client_ip = ip or "127.0.0.1"
 
         existing_user = await self.db.prepare(
             """
@@ -193,15 +179,30 @@ class Registry:
         if existing_user is not None:
             raise RegistryError(f"User {username} already exists")
 
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        recent_total = await self.db.prepare(
+            """
+            SELECT COUNT(*) AS total
+            FROM user_creation_events
+            WHERE ip = ? AND created_at >= ?
+            """
+        ).bind(
+            client_ip,
+            cutoff,
+        ).first()
+
+        if recent_total is not None and recent_total.get("total", 0) >= 5:
+            raise RegistryError("Too many user creations")
+
         await self.db.prepare(
             """
-            INSERT INTO users (username, password_hash, created_by_ip)
+            INSERT INTO users (username, password_hash, created_at)
             VALUES (?, ?, ?)
             """
         ).bind(
             username,
-            self._hash_password(password),
-            ip_address,
+            password_hash,
+            created_at,
         ).run()
 
         await self.db.prepare(
@@ -211,14 +212,14 @@ class Registry:
             """
         ).bind(
             username,
-            ip_address,
-            int(time.time()),
+            client_ip,
+            created_at,
         ).run()
 
         return User(
             username=username,
-            password_hash=self._hash_password(password),
-            created_by_ip=ip_address,
+            password_hash=password_hash,
+            created_at=created_at,
         )
 
     async def getUser(self, username: str) -> User:
@@ -228,7 +229,7 @@ class Registry:
 
         user_result = await self.db.prepare(
             """
-            SELECT username, password_hash, created_by_ip
+            SELECT username, password_hash, created_at
             FROM users
             WHERE username = ?
             """
@@ -242,14 +243,14 @@ class Registry:
         return User(
             username=user_result["username"],
             password_hash=user_result["password_hash"],
-            created_by_ip=user_result.get("created_by_ip"),
+            created_at=user_result.get("created_at"),
         )
 
     async def listUsers(self) -> list[User]:
         await self.ensureSchema()
         users_result = await self.db.prepare(
             """
-            SELECT username, password_hash, created_by_ip
+            SELECT username, password_hash, created_at
             FROM users
             ORDER BY username ASC
             """
@@ -259,7 +260,7 @@ class Registry:
             User(
                 username=user["username"],
                 password_hash=user["password_hash"],
-                created_by_ip=user.get("created_by_ip"),
+                created_at=user.get("created_at"),
             )
             for user in users_result.results
         ]
@@ -268,7 +269,6 @@ class Registry:
         self,
         username: str,
         password: str | None,
-        ip_address: str | None = None,
     ) -> User:
         await self.ensureSchema()
         if not username or not username.strip():
@@ -278,7 +278,7 @@ class Registry:
 
         user_result = await self.db.prepare(
             """
-            SELECT username, password_hash, created_by_ip
+            SELECT username, password_hash, created_at
             FROM users
             WHERE username = ?
             """
@@ -307,7 +307,7 @@ class Registry:
         return User(
             username=user_result["username"],
             password_hash=user_result["password_hash"],
-            created_by_ip=user_result.get("created_by_ip"),
+            created_at=user_result.get("created_at"),
         )
 
     async def getDistribution(
@@ -397,10 +397,9 @@ class Registry:
         release: str,
         artifact,
         password: str | None = None,
-        ip_address: str | None = None,
     ) -> Artifact:
         await self.ensureSchema()
-        await self.requireUserPassword(author, password, ip_address)
+        await self.requireUserPassword(author, password)
 
         if self.bucket is None:
             raise RegistryError("Artifact storage is not configured")
@@ -530,10 +529,9 @@ class Registry:
         distribution: str,
         release: str,
         password: str | None = None,
-        ip_address: str | None = None,
     ) -> dict:
         await self.ensureSchema()
-        await self.requireUserPassword(author, password, ip_address)
+        await self.requireUserPassword(author, password)
 
         artifact_rows = await self.db.prepare(
             """

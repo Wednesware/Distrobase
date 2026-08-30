@@ -1,7 +1,7 @@
 CREATE TABLE users (
     username TEXT NOT NULL PRIMARY KEY,
     password_hash TEXT NOT NULL,
-    created_by_ip TEXT
+    created_at TEXT
 );
 
 CREATE TABLE user_creation_events (
