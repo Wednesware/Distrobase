@@ -81,12 +81,29 @@ async def get_user(username: str, request: Request):
     )
 
     try:
+        auth_username, password = get_basic_auth_credentials(request)
+    except HTTPException:
+        raise
+
+    if auth_username != username:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        )
+
+    try:
+        await registry.requireUserPassword(username, password)
         user = await registry.getUser(username)
         return {
             "username": user.username,
             "createdAt": user.created_at,
         }
     except RegistryError as error:
+        if str(error) == "Authentication required":
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication required",
+            )
         raise HTTPException(
             status_code=404,
             detail=str(error),
