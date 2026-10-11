@@ -46,7 +46,7 @@ def get_basic_auth_credentials(request: Request):
         encoded = header.split(" ", 1)[1]
         decoded = base64.b64decode(encoded).decode("utf-8")
         username, password = decoded.split(":", 1)
-        return username, password
+        return username.strip().lower(), password
     except Exception as exc:  # pragma: no cover - defensive
         raise HTTPException(
             status_code=401,
@@ -85,7 +85,7 @@ async def get_user(username: str, request: Request):
     except HTTPException:
         raise
 
-    if auth_username != username:
+    if auth_username.lower() != username.lower():
         raise HTTPException(
             status_code=401,
             detail="Authentication required",
@@ -216,7 +216,7 @@ async def publish_release(
 
     try:
         username, password = get_basic_auth_credentials(request)
-        if username != author:
+        if username.lower() != author.lower():
             raise HTTPException(
                 status_code=401,
                 detail="Authentication required",
@@ -252,7 +252,7 @@ async def delete_release(
 
     try:
         username, password = get_basic_auth_credentials(request)
-        if username != author:
+        if username.lower() != author.lower():
             raise HTTPException(
                 status_code=401,
                 detail="Authentication required",

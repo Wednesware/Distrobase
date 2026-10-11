@@ -42,7 +42,7 @@ class FakeStatement:
         if "SELECT username" in sql and "FROM users" in sql:
             username = self.bind_values[0]
             for row in table["users"]:
-                if row["username"] == username:
+                if row["username"].lower() == username.lower():
                     return row
             return None
         if "SELECT author, name, latest" in sql:
@@ -136,6 +136,15 @@ class FakeStatement:
             })
             return FakeResult()
 
+        if sql.startswith("UPDATE users"):
+            password_hash = self.bind_values[0]
+            username = self.bind_values[1]
+            for row in self.db.data["users"]:
+                if row["username"].lower() == username.lower():
+                    row["password_hash"] = password_hash
+                    break
+            return FakeResult()
+
         if sql.startswith("UPDATE distributions"):
             for row in self.db.data["distributions"]:
                 if row["author"] == self.bind_values[1] and row["name"] == self.bind_values[2]:
@@ -196,6 +205,25 @@ def test_publish_release_stores_r2_and_d1_metadata():
         assert db.data["distributions"][0]["latest"] == "26.5"
         assert db.data["releases"][0]["version"] == "26.5"
         assert db.data["artifacts"][0]["sha256"] == result.sha256
+
+    asyncio.run(run_test())
+
+
+def test_publish_accepts_case_insensitive_usernames():
+    async def run_test():
+        db = FakeDB()
+        bucket = FakeBucket()
+        registry = Registry(db, bucket)
+        content = b"artifact-data"
+        artifact = FakeUpload("artifact.tar.gz", content)
+
+        await registry.createUser("Wednesware", "hunter2")
+
+        result = await registry.publishRelease("wednesware", "myproject", "26.6", artifact, "hunter2")
+
+        assert result.name == "artifact.tar.gz"
+        assert result.size == len(content)
+        assert db.data["releases"][0]["author"] == "wednesware"
 
     asyncio.run(run_test())
 

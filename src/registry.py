@@ -49,6 +49,14 @@ class User(BaseModel):
     created_at: str | None = None
 
 
+def _normalize_user(value: str) -> str:
+    return value.strip().lower()
+
+
+def _normalize_scope(value: str) -> str:
+    return value.strip().lower()
+
+
 class Registry:
     def __init__(self, db, bucket=None):
         self.db = db
@@ -161,7 +169,7 @@ class Registry:
         if not password or not password.strip():
             raise RegistryError("Password is required")
 
-        username = username.strip()
+        username = _normalize_user(username)
         created_at = created_at or datetime.now(timezone.utc).isoformat()
         password_hash = self._hash_password(password)
         client_ip = ip or "127.0.0.1"
@@ -170,7 +178,7 @@ class Registry:
             """
             SELECT username
             FROM users
-            WHERE username = ?
+            WHERE lower(username) = lower(?)
             """
         ).bind(
             username,
@@ -227,14 +235,15 @@ class Registry:
         if not username or not username.strip():
             raise RegistryError("Username is required")
 
+        username = _normalize_user(username)
         user_result = await self.db.prepare(
             """
             SELECT username, password_hash, created_at
             FROM users
-            WHERE username = ?
+            WHERE lower(username) = ?
             """
         ).bind(
-            username.strip(),
+            username,
         ).first()
 
         if user_result is None:
@@ -276,11 +285,12 @@ class Registry:
         if not password:
             raise RegistryError("Authentication required")
 
+        username = _normalize_user(username)
         user_result = await self.db.prepare(
             """
             SELECT username, password_hash, created_at
             FROM users
-            WHERE username = ?
+            WHERE lower(username) = ?
             """
         ).bind(
             username,
@@ -297,7 +307,7 @@ class Registry:
                 """
                 UPDATE users
                 SET password_hash = ?
-                WHERE username = ?
+                WHERE lower(username) = ?
                 """
             ).bind(
                 self._hash_password(password),
@@ -316,6 +326,8 @@ class Registry:
         distribution: str,
     ) -> Distribution:
         await self.ensureSchema()
+        author = _normalize_scope(author)
+        distribution = _normalize_scope(distribution)
         result = await self.db.prepare(
             """
             SELECT author, name, latest
@@ -343,6 +355,8 @@ class Registry:
         release: str,
     ) -> Release:
         await self.ensureSchema()
+        author = _normalize_scope(author)
+        distribution = _normalize_scope(distribution)
         result = await self.db.prepare(
             """
             SELECT author, distribution, version
@@ -399,6 +413,8 @@ class Registry:
         password: str | None = None,
     ) -> Artifact:
         await self.ensureSchema()
+        author = _normalize_scope(author)
+        distribution = _normalize_scope(distribution)
         await self.requireUserPassword(author, password)
 
         if self.bucket is None:
@@ -531,6 +547,8 @@ class Registry:
         password: str | None = None,
     ) -> dict:
         await self.ensureSchema()
+        author = _normalize_scope(author)
+        distribution = _normalize_scope(distribution)
         await self.requireUserPassword(author, password)
 
         artifact_rows = await self.db.prepare(
@@ -615,6 +633,8 @@ class Registry:
         artifact: str,
     ):
         await self.ensureSchema()
+        author = _normalize_scope(author)
+        distribution = _normalize_scope(distribution)
         result = await self.db.prepare(
             """
             SELECT name, size, sha256, r2_key
