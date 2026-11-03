@@ -64,6 +64,19 @@ class FakeStatement:
 
     async def all(self):
         sql = self.sql.strip()
+        if "FROM distributions d" in sql:
+            rows = []
+            for row in self.db.data["distributions"]:
+                if row["latest"] is None or (self.bind_values and row["author"] != self.bind_values[0]):
+                    continue
+                count = sum(1 for r in self.db.data["releases"] if r["author"] == row["author"] and r["distribution"] == row["name"])
+                rows.append({"author": row["author"], "name": row["name"], "latest": row["latest"], "release_count": count})
+            rows.sort(key=lambda r: (r["author"], r["name"]))
+            return FakeResult(results=rows)
+        if sql.startswith("SELECT version") and "FROM releases" in sql:
+            rows = [{"version": r["version"]} for r in self.db.data["releases"]
+                    if r["author"] == self.bind_values[0] and r["distribution"] == self.bind_values[1]]
+            return FakeResult(results=rows)
         if "SELECT name, size, sha256" in sql:
             rows = []
             for row in self.db.data["artifacts"]:
@@ -271,6 +284,27 @@ def test_get_and_list_users():
     asyncio.run(run_test())
 
 
+def test_list_distributions_and_releases():
+    async def run_test():
+        db = FakeDB()
+        bucket = FakeBucket()
+        registry = Registry(db, bucket)
+
+        await registry.createUser("alkli", "hunter2")
+        await registry.createUser("torch", "secret")
+        for version in ["1.10.0", "1.2.0", "2.0.0-beta.1", "2.0.0"]:
+            await registry.publishRelease("alkli", "shapes", version, FakeUpload(f"{version}.tar.gz", version.encode()), "hunter2")
+        await registry.publishRelease("torch", "lamp", "0.1", FakeUpload("0.1.tar.gz", b"x"), "secret")
+
+        listed = await registry.listDistributions()
+        assert [(d.author, d.distribution, d.releases) for d in listed] == [("alkli", "shapes", 4), ("torch", "lamp", 1)]
+        assert [d.distribution for d in await registry.listDistributions("Torch")] == ["lamp"]
+
+        assert await registry.listReleases("alkli", "shapes") == ["1.2.0", "1.10.0", "2.0.0-beta.1", "2.0.0"]
+
+    asyncio.run(run_test())
+
+
 def test_password_hash_is_salted_and_not_plain_sha256():
     async def run_test():
         db = FakeDB()
@@ -309,6 +343,7 @@ def test_user_routes_precede_distribution_routes():
 
     paths = [route.path for route in entry.app.routes if hasattr(route, "path")]
     assert paths.index("/v1/users") < paths.index("/v1/{author}/{distribution}")
+    assert paths.index("/v1/distributions") < paths.index("/v1/{author}/{distribution}")
     assert paths.index("/v1/users/{username}") < paths.index("/v1/{author}/{distribution}")
 
 
