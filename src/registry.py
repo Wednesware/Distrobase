@@ -34,6 +34,14 @@ class Distribution(BaseModel):
     author: str
     distribution: str
     latest: str
+    releases: list[str] | None = None
+
+
+class DistributionSummary(BaseModel):
+    author: str
+    distribution: str
+    latest: str
+    releases: int
 
 
 class Release(BaseModel):
@@ -55,6 +63,14 @@ def _normalize_user(value: str) -> str:
 
 def _normalize_scope(value: str) -> str:
     return value.strip().lower()
+
+
+def _version_key(version: str):
+    """Orders releases like 1.2 < 1.10 < 2.0, with a pre-release before its release
+    (2.0.0-beta.1 < 2.0.0). Non-numeric parts sort as text."""
+    main, _, pre = version.partition("-")
+    parts = tuple((0, int(part), "") if part.isdigit() else (1, 0, part) for part in main.split("."))
+    return (parts, 0 if pre else 1, pre)
 
 
 class Registry:
@@ -347,6 +363,46 @@ class Registry:
             distribution=result["name"],
             latest=result["latest"],
         )
+
+    async def listDistributions(self, author: str | None = None) -> list[DistributionSummary]:
+        """Every distribution with at least one release, by author then name."""
+        await self.ensureSchema()
+        sql = """
+            SELECT d.author AS author, d.name AS name, d.latest AS latest,
+                   (SELECT COUNT(*) FROM releases r
+                    WHERE r.author = d.author AND r.distribution = d.name) AS release_count
+            FROM distributions d
+            WHERE d.latest IS NOT NULL
+            """
+        if author:
+            statement = self.db.prepare(sql + " AND d.author = ? ORDER BY d.author, d.name").bind(_normalize_scope(author))
+        else:
+            statement = self.db.prepare(sql + " ORDER BY d.author, d.name")
+        result = await statement.all()
+        return [
+            DistributionSummary(
+                author=row["author"],
+                distribution=row["name"],
+                latest=row["latest"],
+                releases=row["release_count"] or 0,
+            )
+            for row in result.results
+        ]
+
+    async def listReleases(self, author: str, distribution: str) -> list[str]:
+        """The distribution's release versions, oldest first."""
+        await self.ensureSchema()
+        result = await self.db.prepare(
+            """
+            SELECT version
+            FROM releases
+            WHERE author = ? AND distribution = ?
+            """
+        ).bind(
+            _normalize_scope(author),
+            _normalize_scope(distribution),
+        ).all()
+        return sorted((row["version"] for row in result.results), key=_version_key)
 
     async def getRelease(
         self,

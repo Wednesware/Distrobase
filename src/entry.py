@@ -1,6 +1,7 @@
 import base64
 from urllib.parse import urlparse
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from workers import WorkerEntrypoint, Response  # type: ignore
 import asgi  # type: ignore
 
@@ -14,6 +15,17 @@ from registry import (
 )
 
 app = FastAPI()
+
+# Reading the registry is public, so any site may read it from a browser (for example a package
+# index). Only GET is allowed cross-origin and no credentials are accepted, so publishing,
+# deleting and account routes stay usable only by non-browser clients such as Hydrogen and Pulley.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET"],
+    allow_credentials=False,
+)
+PUBLIC_READ_HEADERS = {"Access-Control-Allow-Origin": "*"}
 
 def get_worker_env(request: Request):
     env = getattr(request.state, "env", None)
@@ -70,6 +82,17 @@ async def list_users(request: Request):
         }
         for user in users
     ]
+
+
+@app.get("/v1/distributions")
+async def list_distributions(request: Request, author: str | None = None):
+    env = get_worker_env(request)
+    registry = Registry(
+        env.distrobase_db,
+        env.distrobase_artifacts,
+    )
+
+    return await registry.listDistributions(author)
 
 
 @app.get("/v1/users/{username}")
@@ -163,10 +186,12 @@ async def get_distribution(
     )
 
     try:
-        return await registry.getDistribution(
+        found = await registry.getDistribution(
             author,
             distribution,
         )
+        found.releases = await registry.listReleases(author, distribution)
+        return found
     except DistributionNotFound:
         raise HTTPException(
             status_code=404,
@@ -313,6 +338,7 @@ class Default(WorkerEntrypoint):
                     status=200,
                     headers={
                         "Content-Type": "application/octet-stream",
+                        **PUBLIC_READ_HEADERS,
                     },
                 )
 
@@ -320,6 +346,7 @@ class Default(WorkerEntrypoint):
                 return Response(
                     "Artifact not found",
                     status=404,
+                    headers=PUBLIC_READ_HEADERS,
                 )
 
         return await asgi.fetch(
